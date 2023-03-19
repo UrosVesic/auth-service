@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: 
+  name: auth-service
+spec: 
+  replicas: 2
+  selector: 
+    matchLabels: 
+      app: auth-service
+  strategy: 
+    rollingUpdate: 
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template: 
+    metadata: 
+      labels: 
+        app: auth-service
+    spec: 
+      containers: 
+        - image: gcr.io/PROJECT_ID/IMAGE:TAG
+          imagePullPolicy: IfNotPresent
+          name: app
+          env:
+            - name: AWS_CLIENT_ID
+              valueFrom:
+                secretKeyRef :
+                  name: auth-secret
+                  key: AWS_CLIENT_ID
+            - name: AWS_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-secret
+                  key: AWS_CLIENT_SECRET
+            - name: AWS_COGNITO_JWK
+              valueFrom:
+                configMapKeyRef:
+                  name: auth-config
+                  key: AWS_COGNITO_JWK
+            - name: JWT_ISSUER_URI
+              valueFrom:
+                configMapKeyRef:
+                  name: auth-config
+                  key: JWT_ISSUER_URI
+      restartPolicy: Always
