@@ -148,6 +148,7 @@ public class DefaultCognitoService {
     }
 
     private void saveUser(String idToken, String accessToken) {
+        log.info("save user");
         //save in db process
         String[] parts = idToken.split("\\.");
         Base64.Decoder decoder = Base64.getUrlDecoder();
