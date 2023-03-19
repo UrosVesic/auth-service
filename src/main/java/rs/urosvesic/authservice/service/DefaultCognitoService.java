@@ -136,7 +136,7 @@ public class DefaultCognitoService {
                 userSignInResponseData.setRefreshToken(authResponse.authenticationResult().refreshToken());
                 userSignInResponseData.setTokenType(authResponse.authenticationResult().tokenType());
 
-                saveUser(userSignInResponseData.getIdToken(),userSignInResponseData.getAccessToken());
+                //saveUser(userSignInResponseData.getIdToken(),userSignInResponseData.getAccessToken());
 
                 return userSignInResponseData;
             }
