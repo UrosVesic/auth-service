@@ -10,4 +10,6 @@ public class UserSignInResponse {
     private String tokenType;
     private Integer expiresIn;
     private String accessToken;
+    private boolean isAdmin;
+    private String username;
 }

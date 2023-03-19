@@ -1,23 +1,22 @@
 package rs.urosvesic.authservice.service;
 
 
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
+import com.auth0.jwt.JWT;
+import com.auth0.jwt.interfaces.DecodedJWT;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.log4j.Log4j2;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import rs.urosvesic.authservice.client.UserClient;
-import rs.urosvesic.authservice.dto.SaveUserRequest;
-import rs.urosvesic.authservice.dto.UserSignInRequest;
-import rs.urosvesic.authservice.dto.UserSignInResponse;
-import rs.urosvesic.authservice.dto.UserSignUpRequest;
+import rs.urosvesic.authservice.dto.*;
 import rs.urosvesic.authservice.exception.ApplicationException;
 import software.amazon.awssdk.auth.credentials.AnonymousCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.AwsCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.cognitoidentityprovider.CognitoIdentityProviderClient;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.*;
-import software.amazon.awssdk.services.cognitoidentityprovider.model.AttributeType;
 
 import javax.annotation.PostConstruct;
 import javax.crypto.Mac;
@@ -34,12 +33,21 @@ import java.util.Map;
 @Log4j2
 @Service
 @RequiredArgsConstructor
-public class DefaultCognitoService {
+public class CognitoAuthService {
     @Value("${aws.cognito.clientId}")
     private String clientId;
     @Value("${aws.cognito.clientSecret}")
     private String clientSecret;
+    @Value("${aws.cognito.user-pool-id}")
+    private String userPoolId;
+
+    @Value("${aws.access-key}")
+    private String accessKey;
+
+    @Value("${aws.secret-key}")
+    private String secretKey;
     private CognitoIdentityProviderClient cognitoIdentityProviderClient;
+    private CognitoIdentityProviderClient client2;
 
     private final UserClient userClient;
 
@@ -55,17 +63,23 @@ public class DefaultCognitoService {
                 .credentialsProvider(anonymousCredentialsProvider)
                 .region(Region.US_EAST_1)
                 .build();
+
+        AwsCredentials awsCreds = AwsBasicCredentials.create(accessKey,secretKey);
+        StaticCredentialsProvider staticCredentialsProvider = StaticCredentialsProvider.create(awsCreds);
+
+         client2 = CognitoIdentityProviderClient.builder()
+                .credentialsProvider(staticCredentialsProvider)
+                .region(Region.US_EAST_1)
+                .build();
     }
 
     public void signUp(UserSignUpRequest request){
         log.info("Method start signUp");
         try {
-            List<AttributeType> attributeTypes =  request.getAttributes().entrySet()
-                    .stream()
-                    .map(entry-> AttributeType.builder()
-                            .name(entry.getKey())
-                            .value(entry.getValue())
-                            .build()).toList();
+            List<AttributeType> attributeTypes = List.of(AttributeType.builder()
+                    .name("email")
+                    .value(request.getEmail())
+                    .build());
             SignUpRequest signUpRequest = SignUpRequest.builder()
                     .clientId(clientId)
                     .username(request.getUsername())
@@ -76,9 +90,14 @@ public class DefaultCognitoService {
                     .build();
 
             SignUpResponse signUpResponse = cognitoIdentityProviderClient.signUp(signUpRequest);
-            if (signUpResponse != null) {
-                log.info("User confirmed: " + signUpResponse.userConfirmed().toString());
-            }
+            AdminAddUserToGroupRequest addUserToGroupRequest = AdminAddUserToGroupRequest
+                    .builder()
+                    .groupName("user")
+                    .userPoolId(userPoolId)
+                    .username(request.getUsername())
+                    .build();
+
+            client2.adminAddUserToGroup(addUserToGroupRequest);
 
         } catch (CognitoIdentityProviderException ex) {
             log.error(ex.getMessage());
@@ -87,25 +106,42 @@ public class DefaultCognitoService {
     }
 
 
-    //this method is used when user confirm password with verification code (not link), now this is unused
-//    public void confirmSignUp(ConfirmUserSignUpRequest request) throws ApplicationException {
-//        log.info("Method start confirmSignup");
-//        try {
-//            ConfirmSignUpRequest confirmSignUpRequest = ConfirmSignUpRequest.builder()
-//                    .clientId(clientId)
-//                    .confirmationCode(request.getCode())
-//                    .username(request.getUsername())
-//                    .secretHash(CognitoAuthUtil
-//                            .calculateSecretHash(clientId, clientSecret, request.getUsername()))
-//                    .build();
-//            cognitoIdentityProviderClient.confirmSignUp(confirmSignUpRequest);
-//        } catch (CognitoIdentityProviderException ex) {
-//            log.error(ex.getMessage());
-//            throw new ApplicationException(ex.getMessage());
-//        } finally {
-//            log.info("Method end confirmSignup");
-//        }
-//    }
+    public void forgotPassword(final CustomForgotPasswordRequest request) {
+        try {
+            /*UserDto user = userClient.findUser(request.username(), UserUtil.getToken());
+            if(!user.getEmail().equals(request.email())) {
+                throw new RuntimeException(String.format("Provided email address does not match with %s's email address"
+                        , request.username()));
+            }*/
+            final ForgotPasswordRequest forgotPasswordRequest = ForgotPasswordRequest.builder()
+                    .secretHash(CognitoAuthUtil
+                            .calculateSecretHash(clientId, clientSecret, request.username()))
+                    .clientId(clientId)
+                    .username(request.username())
+                    .build();
+            cognitoIdentityProviderClient.forgotPassword(forgotPasswordRequest);
+        }
+        catch (final Exception ex) {
+            throw new RuntimeException(ex.getMessage());
+        }
+    }
+
+    public void resetPassword(final CustomResetPasswordRequest request) {
+        try {
+            final ConfirmForgotPasswordRequest confirmForgotPasswordRequest = ConfirmForgotPasswordRequest.builder()
+                    .secretHash(CognitoAuthUtil
+                            .calculateSecretHash(clientId, clientSecret, request.username()))
+                    .clientId(clientId)
+                    .username(request.username())
+                    .confirmationCode(request.confirmationCode())
+                    .password(request.password())
+                    .build();
+            cognitoIdentityProviderClient.confirmForgotPassword(confirmForgotPasswordRequest);
+        }
+        catch (final Exception ex) {
+            throw new RuntimeException(ex.getMessage());
+        }
+    }
 
     public UserSignInResponse signIn(UserSignInRequest request) throws ApplicationException {
         log.info("Method start login");
@@ -135,6 +171,11 @@ public class DefaultCognitoService {
                 userSignInResponseData.setIdToken(authResponse.authenticationResult().idToken());
                 userSignInResponseData.setRefreshToken(authResponse.authenticationResult().refreshToken());
                 userSignInResponseData.setTokenType(authResponse.authenticationResult().tokenType());
+                userSignInResponseData.setUsername(request.getUsername());
+
+                final DecodedJWT decodedIdToken = JWT.decode(userSignInResponseData.getIdToken());
+                List<String> authorities = decodedIdToken.getClaim("cognito:groups").asList(String.class);
+                userSignInResponseData.setAdmin(authorities.contains("admin"));
 
                 saveUser(userSignInResponseData.getIdToken(),userSignInResponseData.getAccessToken());
 
@@ -148,14 +189,11 @@ public class DefaultCognitoService {
     }
 
     private void saveUser(String idToken, String accessToken) {
-        //save in db process
-        String[] parts = idToken.split("\\.");
-        Base64.Decoder decoder = Base64.getUrlDecoder();
-        String payload = new String(decoder.decode(parts[1]));
-        JsonObject jsonObject = JsonParser.parseString(payload).getAsJsonObject();
-        SaveUserRequest saveUserRequest = new SaveUserRequest(jsonObject.get("sub").getAsString(),
-                jsonObject.get("cognito:username").getAsString(),
-                jsonObject.get("email").getAsString());
+        final DecodedJWT decodedIdToken = JWT.decode(idToken);
+        final String userId = decodedIdToken.getSubject();
+        SaveUserRequest saveUserRequest = new SaveUserRequest(userId,
+                decodedIdToken.getClaim("cognito:username").asString(),
+                decodedIdToken.getClaim("email").asString(),true);
         userClient.saveUser(saveUserRequest,"Bearer "+accessToken);
     }
 
@@ -172,6 +210,56 @@ public class DefaultCognitoService {
         } finally {
             log.info("Method end logout");
         }
+    }
+
+    public RefreshTokenResponse refreshToken(RefreshTokenRequest request) {
+        try {
+            Map<String, String> authParams = new HashMap<>();
+            authParams.put("REFRESH_TOKEN", request.refreshToken());
+            authParams.put("SECRET_HASH",
+                    CognitoAuthUtil.calculateSecretHash(clientId, clientSecret, request.username()));
+            authParams.put("SRP_A", CognitoAuthUtil.getA().toString(16));
+            InitiateAuthRequest initiateAuthRequest = InitiateAuthRequest.builder()
+                    .authFlow(AuthFlowType.REFRESH_TOKEN_AUTH)
+                    .authParameters(authParams)
+                    .clientId(clientId)
+                    .build();
+            InitiateAuthResponse authResponse = cognitoIdentityProviderClient.initiateAuth(initiateAuthRequest);
+
+            if (authResponse != null
+                    && authResponse.challengeName() != null
+                    && authResponse.challengeNameAsString() != null) {
+                throw new ApplicationException(authResponse.challengeNameAsString());
+            }
+            if (authResponse != null && authResponse.authenticationResult() != null) {
+                return new RefreshTokenResponse(
+                        authResponse.authenticationResult().accessToken(),
+                        authResponse.authenticationResult().idToken()
+                );
+            }
+        } catch (CognitoIdentityProviderException | NoSuchAlgorithmException ex) {
+            log.error(ex.getMessage());
+            throw new ApplicationException(ex.getMessage());
+        }
+        return null;
+    }
+
+    public void enableUser(String username) {
+        AdminEnableUserRequest adminEnableUserRequest = AdminEnableUserRequest.builder()
+                .username(username)
+                .userPoolId(userPoolId)
+                .build();
+        client2.adminEnableUser(adminEnableUserRequest);
+
+    }
+
+    public void disableUser(String username) {
+        AdminDisableUserRequest adminDisableUserRequest = AdminDisableUserRequest.builder()
+                .username(username)
+                .userPoolId(userPoolId)
+                .build();
+        client2.adminDisableUser(adminDisableUserRequest);
+
     }
 
     private class CognitoAuthUtil {

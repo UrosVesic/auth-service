@@ -4,7 +4,6 @@ import lombok.Data;
 
 import javax.validation.constraints.NotEmpty;
 import javax.validation.constraints.NotNull;
-import java.util.Map;
 
 @Data
 public class UserSignUpRequest {
@@ -24,6 +23,6 @@ public class UserSignUpRequest {
     private String password;
 
     @NotNull(message = "Attributes should not be empty.")
-    private Map<String,String> attributes;
+    private String email;
 
 }
